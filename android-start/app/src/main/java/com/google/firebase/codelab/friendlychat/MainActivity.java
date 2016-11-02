@@ -66,6 +66,10 @@ import de.hdodenhof.circleimageview.CircleImageView;
 public class MainActivity extends AppCompatActivity
         implements GoogleApiClient.OnConnectionFailedListener {
 
+    //Firebase Authentication variables
+    private FirebaseAuth mFirebaseAuth;
+    private FirebaseUser mFirebaseUser;
+
     public static class MessageViewHolder extends RecyclerView.ViewHolder {
         public TextView messageTextView;
         public TextView messengerTextView;
@@ -97,6 +101,9 @@ public class MainActivity extends AppCompatActivity
     private EditText mMessageEditText;
 
     // Firebase instance variables
+    private DatabaseReference mFirebaseDataReference;
+    private FirebaseRecyclerAdapter<FriendlyMessage, MessageViewHolder>
+        mFirebaseAdapter;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -118,7 +125,48 @@ public class MainActivity extends AppCompatActivity
         mLinearLayoutManager.setStackFromEnd(true);
         mMessageRecyclerView.setLayoutManager(mLinearLayoutManager);
 
-        mProgressBar.setVisibility(ProgressBar.INVISIBLE);
+        mFirebaseDataReference = FirebaseDatabase.getInstance().getReference();
+        mFirebaseAdapter = new FirebaseRecyclerAdapter<FriendlyMessage, MessageViewHolder>(
+                FriendlyMessage.class,
+                R.layout.item_message,
+                MessageViewHolder.class,
+                mFirebaseDataReference.child(MESSAGES_CHILD)
+        ) {
+            @Override
+            protected void populateViewHolder(MessageViewHolder viewHolder, FriendlyMessage model, int position) {
+                mProgressBar.setVisibility(ProgressBar.INVISIBLE);
+
+                viewHolder.messageTextView.setText(model.getText());
+                viewHolder.messengerTextView.setText(model.getName());
+                if(model.getPhotoUrl() == null){
+                    viewHolder.messengerImageView.setImageDrawable(
+                            ContextCompat.getDrawable(MainActivity.this, R.drawable.ic_account_circle_black_36dp)
+                    );
+                } else {
+                    Glide.with(MainActivity.this)
+                            .load(model.getPhotoUrl())
+                            .into(viewHolder.messengerImageView);
+                }
+            }
+        };
+
+        mFirebaseAdapter.registerAdapterDataObserver(new RecyclerView.AdapterDataObserver() {
+            @Override
+            public void onItemRangeInserted(int positionStart, int itemCount) {
+                super.onItemRangeInserted(positionStart, itemCount);
+                int messageCount = mFirebaseAdapter.getItemCount();
+                int lastVisiblePosition =
+                        mLinearLayoutManager.findLastVisibleItemPosition();
+                if(lastVisiblePosition == -1 ||
+                        (positionStart >= (messageCount -1) &&
+                            lastVisiblePosition == (positionStart -1))){
+                    mMessageRecyclerView.scrollToPosition(positionStart);
+                }
+            }
+        });
+
+        mMessageRecyclerView.setLayoutManager(mLinearLayoutManager);
+        mMessageRecyclerView.setAdapter(mFirebaseAdapter);
 
         mMessageEditText = (EditText) findViewById(R.id.messageEditText);
         mMessageEditText.setFilters(new InputFilter[]{new InputFilter.LengthFilter(mSharedPreferences
@@ -147,6 +195,13 @@ public class MainActivity extends AppCompatActivity
             @Override
             public void onClick(View view) {
                 // Send messages on click.
+                FriendlyMessage message = new FriendlyMessage(
+                        mMessageEditText.getText().toString(),
+                        mUsername,
+                        mPhotoUrl
+                );
+                mFirebaseDataReference.child(MESSAGES_CHILD).push().setValue(message);
+                mMessageEditText.setText("");
             }
         });
     }
@@ -155,7 +210,17 @@ public class MainActivity extends AppCompatActivity
     public void onStart() {
         super.onStart();
         // Check if user is signed in.
-        // TODO: Add code to check if user is signed in.
+        mFirebaseAuth = FirebaseAuth.getInstance();
+        mFirebaseUser = mFirebaseAuth.getCurrentUser();
+        if(mFirebaseUser == null){
+            startActivity(new Intent(this, SignInActivity.class));
+            finish();
+            return;
+        } else {
+            mUsername = mFirebaseUser.getDisplayName();
+            if(mFirebaseUser.getPhotoUrl() != null)
+                mPhotoUrl = mFirebaseUser.getPhotoUrl().toString();
+        }
     }
 
     @Override
@@ -182,7 +247,16 @@ public class MainActivity extends AppCompatActivity
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        return super.onOptionsItemSelected(item);
+        switch (item.getItemId()){
+            case R.id.sign_out_menu:
+                mFirebaseAuth.signOut();
+                Auth.GoogleSignInApi.signOut(mGoogleApiClient);
+                mUsername = ANONYMOUS;
+                startActivity(new Intent(this, SignInActivity.class));
+                return true;
+            default:
+                return super.onOptionsItemSelected(item);
+        }
     }
 
     @Override
